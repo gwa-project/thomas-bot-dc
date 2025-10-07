@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, ActivityType } = require('discord.js');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -66,8 +66,16 @@ client.once('ready', () => {
   console.log(`🔧 Loaded ${client.commands.size} commands`);
   console.log('========================================');
 
-  // Set bot status
-  client.user.setActivity(`${PREFIX}help`, { type: 'LISTENING' });
+  // Set bot status: Idle + Listening to new music
+  client.user.setPresence({
+    status: 'idle',
+    activities: [{
+      name: 'new music',
+      type: ActivityType.Listening
+    }]
+  });
+
+  console.log('🎭 Status set to: Idle | Listening to new music');
 });
 
 // Message Handler
