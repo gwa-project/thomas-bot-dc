@@ -1,58 +1,96 @@
-name: Deploy Discord Bot to Google Cloud Run
+name: Deploy Discord Bot to VPS
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
-env:
-  SERVICE_NAME: thomas-bot-dc
-  REGION: asia-southeast1
-
 jobs:
   deploy:
+    name: Deploy to Alibaba VPS
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v1
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@v1.0.3
       with:
-        credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        script: |
+          set -e
 
-    - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v1
+          echo "=========================================="
+          echo "🚀 Deploying Discord Bot to VPS"
+          echo "=========================================="
 
-    - name: Verify authentication
-      run: gcloud auth list
+          # Define variables
+          DEPLOY_PATH="/var/www/discord-bot"
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          PM2_APP_NAME="thomas-bot"
 
-    - name: Enable required APIs
-      run: |
-        echo "Ensuring required APIs are enabled..."
-        gcloud services enable run.googleapis.com
-        gcloud services enable cloudbuild.googleapis.com
-        gcloud services enable artifactregistry.googleapis.com
-        echo "All APIs enabled successfully!"
+          # Create deploy directory if not exists
+          if [ ! -d "$DEPLOY_PATH" ]; then
+            echo "📁 Creating deploy directory..."
+            mkdir -p $DEPLOY_PATH
+          fi
 
-    - name: Configure Docker for GCR
-      run: gcloud auth configure-docker
+          cd $DEPLOY_PATH
 
-    - name: Build and Deploy to Cloud Run
-      run: |
-        gcloud run deploy ${{ env.SERVICE_NAME }} \
-          --source=. \
-          --region=${{ env.REGION }} \
-          --allow-unauthenticated \
-          --memory=512Mi \
-          --cpu=1 \
-          --min-instances=1 \
-          --max-instances=3 \
-          --timeout=300s \
-          --set-env-vars="DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }},CLIENT_ID=${{ secrets.CLIENT_ID }},PUBLIC_KEY=${{ secrets.PUBLIC_KEY }},NODE_ENV=production"
+          # Clone or pull repository
+          if [ -d ".git" ]; then
+            echo "📥 Pulling latest changes..."
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+          else
+            echo "📥 Cloning repository..."
+            git clone $REPO_URL .
+          fi
 
-    - name: Get service URL
-      run: |
-        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region=${{ env.REGION }} --format="value(status.url)")
-        echo "Service deployed at: $SERVICE_URL"
+          # Install/Update dependencies
+          echo "📦 Installing dependencies..."
+          npm install --production
+
+          # Create/Update .env file
+          echo "⚙️ Updating environment variables..."
+          cat > .env << 'EOF'
+          DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
+          CLIENT_ID=${{ secrets.CLIENT_ID }}
+          PUBLIC_KEY=${{ secrets.PUBLIC_KEY }}
+          NODE_ENV=production
+          PORT=8080
+          EOF
+
+          # Check if PM2 process exists
+          if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
+            echo "🔄 Restarting bot with PM2..."
+            pm2 restart $PM2_APP_NAME --update-env
+          else
+            echo "🚀 Starting bot with PM2..."
+            pm2 start index.js --name $PM2_APP_NAME
+            pm2 save
+          fi
+
+          # Show status
+          echo ""
+          echo "=========================================="
+          echo "✅ Deployment Complete!"
+          echo "=========================================="
+          pm2 status
+
+    - name: Show Bot Logs
+      if: always()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        script: |
+          echo "📋 Recent bot logs:"
+          pm2 logs thomas-bot --lines 30 --nostream || echo "⚠️ No logs yet"
