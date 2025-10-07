@@ -1,10 +1,35 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const express = require('express');
 
 // Bot Configuration
 const PREFIX = '!T';
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const PORT = process.env.PORT || 8080;
+
+// Initialize Express server for Cloud Run health checks
+const app = express();
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    bot: client.user ? client.user.tag : 'Starting...',
+    uptime: process.uptime(),
+    guilds: client.guilds ? client.guilds.cache.size : 0,
+    prefix: PREFIX
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+// Start Express server
+app.listen(PORT, () => {
+  console.log(`🌐 HTTP server listening on port ${PORT}`);
+});
 
 // Initialize Discord Client
 const client = new Client({
