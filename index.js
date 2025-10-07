@@ -1,12 +1,36 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
 // Bot Configuration
 const PREFIX = '!T';
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const PORT = process.env.PORT || 8080;
+
+// Initialize Discord Client
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+  ],
+});
+
+// Load Commands
+client.commands = new Collection();
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+
+for (const file of commandFiles) {
+  const filePath = path.join(commandsPath, file);
+  const command = require(filePath);
+  client.commands.set(command.name, command);
+  console.log(`📦 Loaded command: ${command.name}`);
+}
 
 // Initialize Express server for Cloud Run health checks
 const app = express();
@@ -18,7 +42,8 @@ app.get('/', (req, res) => {
     bot: client.user ? client.user.tag : 'Starting...',
     uptime: process.uptime(),
     guilds: client.guilds ? client.guilds.cache.size : 0,
-    prefix: PREFIX
+    prefix: PREFIX,
+    commands: client.commands.size
   });
 });
 
@@ -31,16 +56,6 @@ app.listen(PORT, () => {
   console.log(`🌐 HTTP server listening on port ${PORT}`);
 });
 
-// Initialize Discord Client
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-  ],
-});
-
 // Bot Ready Event
 client.once('ready', () => {
   console.log('========================================');
@@ -48,6 +63,7 @@ client.once('ready', () => {
   console.log(`📝 Prefix: ${PREFIX}`);
   console.log(`🆔 Client ID: ${CLIENT_ID}`);
   console.log(`🌐 Serving ${client.guilds.cache.size} servers`);
+  console.log(`🔧 Loaded ${client.commands.size} commands`);
   console.log('========================================');
 
   // Set bot status
@@ -64,148 +80,20 @@ client.on('messageCreate', async (message) => {
 
   // Parse command and arguments
   const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
+  const commandName = args.shift().toLowerCase();
 
+  // Get command from collection
+  const command = client.commands.get(commandName);
+
+  if (!command) {
+    return message.reply(`❌ Unknown command. Use \`${PREFIX}help\` to see available commands.`);
+  }
+
+  // Execute command
   try {
-    // Command: ping
-    if (command === 'ping') {
-      const sent = await message.reply('🏓 Pinging...');
-      const latency = sent.createdTimestamp - message.createdTimestamp;
-      sent.edit(`🏓 Pong!\n⏱️ Latency: ${latency}ms\n💓 API Latency: ${Math.round(client.ws.ping)}ms`);
-    }
-
-    // Command: help
-    else if (command === 'help') {
-      message.reply({
-        embeds: [{
-          color: 0x0099ff,
-          title: '📚 Thomas Bot - Command List',
-          description: `Prefix: \`${PREFIX}\``,
-          fields: [
-            {
-              name: `${PREFIX}ping`,
-              value: 'Check bot latency',
-              inline: true
-            },
-            {
-              name: `${PREFIX}help`,
-              value: 'Show this help message',
-              inline: true
-            },
-            {
-              name: `${PREFIX}info`,
-              value: 'Show bot information',
-              inline: true
-            },
-            {
-              name: `${PREFIX}server`,
-              value: 'Show server information',
-              inline: true
-            },
-          ],
-          timestamp: new Date(),
-          footer: {
-            text: 'Thomas Bot v1.0'
-          }
-        }]
-      });
-    }
-
-    // Command: info
-    else if (command === 'info') {
-      message.reply({
-        embeds: [{
-          color: 0x00ff00,
-          title: '🤖 Bot Information',
-          fields: [
-            {
-              name: 'Bot Name',
-              value: client.user.tag,
-              inline: true
-            },
-            {
-              name: 'Bot ID',
-              value: client.user.id,
-              inline: true
-            },
-            {
-              name: 'Prefix',
-              value: `\`${PREFIX}\``,
-              inline: true
-            },
-            {
-              name: 'Servers',
-              value: `${client.guilds.cache.size}`,
-              inline: true
-            },
-            {
-              name: 'Node.js Version',
-              value: process.version,
-              inline: true
-            },
-            {
-              name: 'Discord.js Version',
-              value: require('discord.js').version,
-              inline: true
-            }
-          ],
-          timestamp: new Date()
-        }]
-      });
-    }
-
-    // Command: server
-    else if (command === 'server') {
-      if (!message.guild) {
-        return message.reply('❌ This command can only be used in a server!');
-      }
-
-      message.reply({
-        embeds: [{
-          color: 0xff9900,
-          title: '🏰 Server Information',
-          thumbnail: {
-            url: message.guild.iconURL()
-          },
-          fields: [
-            {
-              name: 'Server Name',
-              value: message.guild.name,
-              inline: true
-            },
-            {
-              name: 'Server ID',
-              value: message.guild.id,
-              inline: true
-            },
-            {
-              name: 'Owner',
-              value: `<@${message.guild.ownerId}>`,
-              inline: true
-            },
-            {
-              name: 'Members',
-              value: `${message.guild.memberCount}`,
-              inline: true
-            },
-            {
-              name: 'Created At',
-              value: message.guild.createdAt.toLocaleDateString(),
-              inline: true
-            }
-          ],
-          timestamp: new Date()
-        }]
-      });
-    }
-
-    // Unknown command
-    else {
-      message.reply(`❌ Unknown command. Use \`${PREFIX}help\` to see available commands.`);
-    }
-
+    await command.execute(message, args, client, PREFIX, Array.from(client.commands.values()));
   } catch (error) {
-    console.error('Command execution error:', error);
+    console.error(`Error executing command ${commandName}:`, error);
     message.reply('❌ An error occurred while executing the command.');
   }
 });
