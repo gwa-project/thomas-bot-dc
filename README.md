@@ -9,7 +9,24 @@ Discord bot dengan prefix `!T` yang di-deploy ke Google Cloud Platform menggunak
 - ✅ **Help Command** - Menampilkan daftar command
 - ✅ **Info Command** - Informasi tentang bot
 - ✅ **Server Command** - Informasi server Discord
+- ✅ **Status Command** - Ganti bot status/activity
+- 🎵 **Music Bot** - Play musik dari YouTube (⚠️ Experimental on Cloud Run)
 - ✅ **Auto Deploy** - GitHub Actions workflow untuk deploy ke GCP
+
+## 🎵 Music Commands (Experimental)
+
+⚠️ **WARNING:** Music bot di Cloud Run memiliki limitations. [Baca detail di sini](MUSIC_BOT_WARNING.md)
+
+| Command | Description |
+|---------|-------------|
+| `!T play <song>` | Play music from YouTube |
+| `!T pause` | Pause current song |
+| `!T resume` | Resume paused song |
+| `!T skip` | Skip current song |
+| `!T stop` | Stop music & clear queue |
+| `!T queue` | Show music queue |
+| `!T nowplaying` | Show current song |
+| `!T volume <0-100>` | Set volume |
 
 ## 📋 Prerequisites
 
@@ -70,6 +87,23 @@ thomas-bot-dc/
 ├── .env.example                # Environment variables template
 ├── .gitignore                  # Git ignore rules
 ├── README.md                   # This file
+├── MUSIC_BOT_WARNING.md        # Music bot limitations warning
+├── commands/                   # Command files
+│   ├── ping.js
+│   ├── help.js
+│   ├── info.js
+│   ├── server.js
+│   ├── status.js
+│   ├── play.js                # Music commands
+│   ├── pause.js
+│   ├── resume.js
+│   ├── skip.js
+│   ├── stop.js
+│   ├── queue.js
+│   ├── nowplaying.js
+│   └── volume.js
+├── utils/                      # Utility modules
+│   └── musicManager.js         # Music queue & player
 └── .github/
     └── workflows/
         └── deploy.yml          # GitHub Actions deployment workflow
@@ -77,12 +111,26 @@ thomas-bot-dc/
 
 ## 🎮 Available Commands
 
+### General Commands
 | Command | Description |
 |---------|-------------|
 | `!T ping` | Check bot latency |
 | `!T help` | Show command list |
 | `!T info` | Show bot information |
 | `!T server` | Show server information |
+| `!T status <type> <text>` | Change bot status |
+
+### Music Commands (⚠️ Experimental)
+| Command | Description |
+|---------|-------------|
+| `!T play <song>` | Play music from YouTube |
+| `!T pause` | Pause current song |
+| `!T resume` | Resume paused song |
+| `!T skip` | Skip current song |
+| `!T stop` | Stop music & clear queue |
+| `!T queue` | Show music queue |
+| `!T nowplaying` | Show current song |
+| `!T volume <0-100>` | Set volume |
 
 ## 🌐 Deploy to Google Cloud Platform
 
