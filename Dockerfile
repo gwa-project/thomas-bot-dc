@@ -26,6 +26,7 @@ COPY --from=builder /app/package.json ./package.json
 
 # Copy application code
 COPY index.js ./
+COPY commands/ ./commands/
 
 # Run as non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
