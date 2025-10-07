@@ -1,0 +1,58 @@
+name: Deploy Discord Bot to Google Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: thomas-bot-dc
+  REGION: asia-northeast1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    - name: Verify authentication
+      run: gcloud auth list
+
+    - name: Enable required APIs
+      run: |
+        echo "Ensuring required APIs are enabled..."
+        gcloud services enable run.googleapis.com
+        gcloud services enable cloudbuild.googleapis.com
+        gcloud services enable artifactregistry.googleapis.com
+        echo "All APIs enabled successfully!"
+
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+
+    - name: Build and Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --source=. \
+          --region=${{ env.REGION }} \
+          --allow-unauthenticated \
+          --memory=512Mi \
+          --cpu=1 \
+          --min-instances=1 \
+          --max-instances=3 \
+          --timeout=300s \
+          --set-env-vars="DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }},CLIENT_ID=${{ secrets.CLIENT_ID }},PUBLIC_KEY=${{ secrets.PUBLIC_KEY }},NODE_ENV=production"
+
+    - name: Get service URL
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region=${{ env.REGION }} --format="value(status.url)")
+        echo "Service deployed at: $SERVICE_URL"

@@ -1,0 +1,23 @@
+{
+  "name": "thomas-bot-dc",
+  "version": "1.0.0",
+  "description": "Discord bot dengan prefix !T",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["discord", "bot", "discord.js"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
