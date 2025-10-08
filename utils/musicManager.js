@@ -4,9 +4,10 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
-  entersState
+  entersState,
+  StreamType
 } = require('@discordjs/voice');
-const play = require('play-dl');
+const ytdl = require('@distube/ytdl-core');
 
 // Map to store queue per guild
 const queues = new Map();
@@ -72,9 +73,14 @@ class MusicQueue {
     this.isPlaying = true;
 
     try {
-      const stream = await play.stream(this.currentSong.url);
-      const resource = createAudioResource(stream.stream, {
-        inputType: stream.type,
+      const stream = ytdl(this.currentSong.url, {
+        filter: 'audioonly',
+        quality: 'highestaudio',
+        highWaterMark: 1 << 25
+      });
+
+      const resource = createAudioResource(stream, {
+        inputType: StreamType.Arbitrary,
         inlineVolume: true
       });
 

@@ -1,4 +1,5 @@
-const play = require('play-dl');
+const ytdl = require('@distube/ytdl-core');
+const ytsr = require('ytsr');
 const { getQueue } = require('../utils/musicManager');
 
 module.exports = {
@@ -19,35 +20,46 @@ module.exports = {
     const voiceChannel = message.member.voice.channel;
 
     try {
-      message.channel.send('🔍 Searching...');
+      const searchMsg = await message.channel.send('🔍 Searching...');
 
-      // Search YouTube
+      let songUrl;
       let songInfo;
 
-      if (play.yt_validate(query) === 'video') {
-        // Direct YouTube URL
-        songInfo = await play.video_info(query);
+      // Check if it's a YouTube URL
+      if (ytdl.validateURL(query)) {
+        songUrl = query;
       } else {
-        // Search by name
-        const searched = await play.search(query, {
-          limit: 1
-        });
+        // Search YouTube
+        const searchResults = await ytsr(query, { limit: 1 });
 
-        if (!searched || searched.length === 0) {
+        if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
+          await searchMsg.delete();
           return message.reply('❌ No results found!');
         }
 
-        songInfo = searched[0];
+        // Get first video result
+        const video = searchResults.items.find(item => item.type === 'video');
+        if (!video) {
+          await searchMsg.delete();
+          return message.reply('❌ No video results found!');
+        }
+
+        songUrl = video.url;
       }
+
+      // Get video info
+      songInfo = await ytdl.getInfo(songUrl);
 
       // Create song object
       const song = {
-        title: songInfo.title,
-        url: songInfo.url,
-        duration: formatDuration(songInfo.durationInSec),
-        thumbnail: songInfo.thumbnails[0]?.url || '',
+        title: songInfo.videoDetails.title,
+        url: songInfo.videoDetails.video_url,
+        duration: formatDuration(parseInt(songInfo.videoDetails.lengthSeconds)),
+        thumbnail: songInfo.videoDetails.thumbnails[0]?.url || '',
         requester: message.author.tag
       };
+
+      await searchMsg.delete();
 
       // Get queue
       const queue = getQueue(message.guild.id);

@@ -16,7 +16,8 @@
     "express": "^4.18.2",
     "@discordjs/voice": "^0.16.1",
     "opusscript": "^0.0.8",
-    "play-dl": "^1.9.7",
+    "@distube/ytdl-core": "^4.13.3",
+    "ytsr": "^3.8.4",
     "libsodium-wrappers": "^0.7.13",
     "ffmpeg-static": "^5.2.0"
   },
