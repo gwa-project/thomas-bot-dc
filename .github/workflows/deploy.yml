@@ -21,7 +21,6 @@ jobs:
 
     - name: Build binary
       run: |
-        cd thomas-bot-dc
         go mod download
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o thomas-bot .
 
@@ -32,9 +31,8 @@ jobs:
         username: ${{ secrets.VPS_USERNAME }}
         password: ${{ secrets.VPS_PASSWORD }}
         port: 22
-        source: "thomas-bot-dc/thomas-bot"
+        source: "thomas-bot"
         target: "/tmp/"
-        strip_components: 1
 
     - name: Setup and Start Bot
       uses: appleboy/ssh-action@v1.0.3
