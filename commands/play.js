@@ -1,5 +1,5 @@
-const ytdl = require('@distube/ytdl-core');
-const ytsr = require('ytsr');
+const ytdl = require('ytdl-core');
+const YouTube = require('youtube-sr').default;
 const { getQueue } = require('../utils/musicManager');
 
 module.exports = {
@@ -22,40 +22,40 @@ module.exports = {
     try {
       const searchMsg = await message.channel.send('🔍 Searching...');
 
-      let songUrl;
-      let songInfo;
+      let video;
 
       // Check if it's a YouTube URL
       if (ytdl.validateURL(query)) {
-        songUrl = query;
+        const info = await ytdl.getBasicInfo(query);
+        video = {
+          title: info.videoDetails.title,
+          url: info.videoDetails.video_url,
+          duration: parseInt(info.videoDetails.lengthSeconds),
+          thumbnail: info.videoDetails.thumbnails[0]?.url || ''
+        };
       } else {
-        // Search YouTube
-        const searchResults = await ytsr(query, { limit: 1 });
+        // Search YouTube using youtube-sr
+        const searchResults = await YouTube.searchOne(query);
 
-        if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
+        if (!searchResults) {
           await searchMsg.delete();
           return message.reply('❌ No results found!');
         }
 
-        // Get first video result
-        const video = searchResults.items.find(item => item.type === 'video');
-        if (!video) {
-          await searchMsg.delete();
-          return message.reply('❌ No video results found!');
-        }
-
-        songUrl = video.url;
+        video = {
+          title: searchResults.title,
+          url: searchResults.url,
+          duration: searchResults.duration / 1000, // Convert ms to seconds
+          thumbnail: searchResults.thumbnail?.url || ''
+        };
       }
-
-      // Get video info
-      songInfo = await ytdl.getInfo(songUrl);
 
       // Create song object
       const song = {
-        title: songInfo.videoDetails.title,
-        url: songInfo.videoDetails.video_url,
-        duration: formatDuration(parseInt(songInfo.videoDetails.lengthSeconds)),
-        thumbnail: songInfo.videoDetails.thumbnails[0]?.url || '',
+        title: video.title,
+        url: video.url,
+        duration: formatDuration(video.duration),
+        thumbnail: video.thumbnail,
         requester: message.author.tag
       };
 
@@ -103,7 +103,7 @@ module.exports = {
 function formatDuration(seconds) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
+  const secs = Math.floor(seconds % 60);
 
   if (hours > 0) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;

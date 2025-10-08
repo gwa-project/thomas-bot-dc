@@ -7,7 +7,7 @@ const {
   entersState,
   StreamType
 } = require('@discordjs/voice');
-const ytdl = require('@distube/ytdl-core');
+const ytdl = require('ytdl-core');
 
 // Map to store queue per guild
 const queues = new Map();
