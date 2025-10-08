@@ -27,6 +27,21 @@ const client = new Client({
 const player = new Player(client);
 client.player = player;
 
+// Player event listeners
+player.events.on('error', (queue, error) => {
+  console.error('Player error:', error);
+  queue.metadata.channel.send(`❌ Error: ${error.message}`);
+});
+
+player.events.on('playerError', (queue, error) => {
+  console.error('Player error:', error);
+  queue.metadata.channel.send(`❌ Error playing track: ${error.message}`);
+});
+
+player.events.on('playerStart', (queue, track) => {
+  queue.metadata.channel.send(`🎵 Now playing: **${track.title}**`);
+});
+
 // Load Commands
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
