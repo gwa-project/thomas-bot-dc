@@ -3,12 +3,25 @@ const { Client, GatewayIntentBits, Collection, ActivityType } = require('discord
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const play = require('play-dl');
 
 // Bot Configuration
 const PREFIX = '!T';
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const PORT = process.env.PORT || 8080;
+
+// Setup play-dl to bypass YouTube blocking
+(async () => {
+  try {
+    await play.setToken({
+      useragent: ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36']
+    });
+    console.log('✅ Play-dl configured successfully');
+  } catch (error) {
+    console.warn('⚠️ Play-dl setup warning:', error.message);
+  }
+})();
 
 // Initialize Discord Client
 const client = new Client({
@@ -58,7 +71,7 @@ app.listen(PORT, () => {
 });
 
 // Bot Ready Event
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log('========================================');
   console.log(`✅ Bot is online as ${client.user.tag}`);
   console.log(`📝 Prefix: ${PREFIX}`);
