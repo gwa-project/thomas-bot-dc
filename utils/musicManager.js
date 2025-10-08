@@ -73,10 +73,33 @@ class MusicQueue {
     this.isPlaying = true;
 
     try {
-      const stream = ytdl(this.currentSong.url, {
+      // Agent options to bypass YouTube blocking
+      const agent = ytdl.createAgent(undefined, {
+        localAddress: undefined
+      });
+
+      // Get fresh stream info to avoid 410 errors
+      const info = await ytdl.getInfo(this.currentSong.url, {
+        agent,
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+          }
+        }
+      });
+
+      const stream = ytdl.downloadFromInfo(info, {
         filter: 'audioonly',
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25
+        quality: 'lowestaudio', // Use lowest quality for better stability
+        highWaterMark: 1 << 25,
+        dlChunkSize: 0, // Disable chunking
+        agent,
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        }
       });
 
       const resource = createAudioResource(stream, {
@@ -85,33 +108,47 @@ class MusicQueue {
       });
 
       resource.volume.setVolume(this.volume);
+
+      // Handle stream errors
+      stream.on('error', (error) => {
+        console.error('Stream error:', error);
+        if (textChannel) {
+          textChannel.send('❌ Stream error, skipping to next song...');
+        }
+        this.playNext();
+      });
+
       this.player.play(resource);
 
-      textChannel.send({
-        embeds: [{
-          color: 0x00ff00,
-          title: '🎵 Now Playing',
-          description: `[${this.currentSong.title}](${this.currentSong.url})`,
-          fields: [
-            {
-              name: 'Duration',
-              value: this.currentSong.duration,
-              inline: true
-            },
-            {
-              name: 'Requested by',
-              value: this.currentSong.requester,
-              inline: true
+      if (textChannel) {
+        textChannel.send({
+          embeds: [{
+            color: 0x00ff00,
+            title: '🎵 Now Playing',
+            description: `[${this.currentSong.title}](${this.currentSong.url})`,
+            fields: [
+              {
+                name: 'Duration',
+                value: this.currentSong.duration,
+                inline: true
+              },
+              {
+                name: 'Requested by',
+                value: this.currentSong.requester,
+                inline: true
+              }
+            ],
+            thumbnail: {
+              url: this.currentSong.thumbnail
             }
-          ],
-          thumbnail: {
-            url: this.currentSong.thumbnail
-          }
-        }]
-      });
+          }]
+        });
+      }
     } catch (error) {
       console.error('Error playing song:', error);
-      textChannel.send('❌ Error playing this song, skipping...');
+      if (textChannel) {
+        textChannel.send(`❌ Error: ${error.message}. Skipping...`);
+      }
       this.playNext();
     }
   }
