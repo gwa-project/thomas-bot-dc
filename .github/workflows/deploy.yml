@@ -52,16 +52,6 @@ jobs:
             git clone $REPO_URL .
           fi
 
-          # Install yt-dlp if not exists
-          if ! command -v yt-dlp &> /dev/null; then
-            echo "📥 Installing yt-dlp..."
-            wget -q https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-            chmod +x /usr/local/bin/yt-dlp
-            echo "✅ yt-dlp installed"
-          else
-            echo "✅ yt-dlp already installed"
-          fi
-
           # Install/Update dependencies
           echo "📦 Installing dependencies..."
           npm install --production

@@ -1,11 +1,13 @@
 module.exports = {
   name: 'stop',
-  description: 'Stop the music and clear the queue',
+  description: 'Stop the music and clear queue',
   execute(message, args, client) {
-    const queue = client.distube.getQueue(message);
-    if (!queue) return message.reply('❌ Nothing is playing!');
+    const queue = client.player.nodes.get(message.guild.id);
+    if (!queue) {
+      return message.reply('❌ Nothing is playing!');
+    }
 
-    client.distube.stop(message);
-    message.reply('⏹ Stopped the music and cleared the queue!');
+    queue.delete();
+    message.reply('⏹ Stopped the music!');
   },
 };

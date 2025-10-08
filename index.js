@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, ActivityType } = require('discord.js');
-const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { Player } = require('discord-player');
+const { YouTubeExtractor } = require('@discord-player/extractor');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -23,18 +23,12 @@ const client = new Client({
   ],
 });
 
-// Initialize DisTube with yt-dlp plugin
-client.distube = new DisTube(client, {
-  emitNewSongOnly: true,
-  leaveOnEmpty: true,
-  leaveOnFinish: false,
-  leaveOnStop: true,
-  savePreviousSongs: true,
-  searchSongs: 5,
-  nsfw: false,
-  emptyCooldown: 60,
-  plugins: [new YtDlpPlugin()]
-});
+// Initialize Music Player (lightweight)
+const player = new Player(client);
+client.player = player;
+
+// Register YouTube extractor
+player.extractors.register(YouTubeExtractor, {});
 
 // Load Commands
 client.commands = new Collection();
@@ -92,42 +86,6 @@ client.once('clientReady', () => {
   });
 
   console.log('🎭 Status set to: Idle | Listening to new music');
-});
-
-// DisTube Events
-client.distube.on('playSong', (queue, song) => {
-  queue.textChannel.send({
-    embeds: [{
-      color: 0x00ff00,
-      title: '🎵 Now Playing',
-      description: `[${song.name}](${song.url})`,
-      fields: [
-        { name: 'Duration', value: song.formattedDuration, inline: true },
-        { name: 'Requested by', value: song.user.tag, inline: true }
-      ],
-      thumbnail: { url: song.thumbnail }
-    }]
-  });
-});
-
-client.distube.on('addSong', (queue, song) => {
-  queue.textChannel.send({
-    embeds: [{
-      color: 0x0099ff,
-      title: '➕ Added to Queue',
-      description: `[${song.name}](${song.url})`,
-      fields: [
-        { name: 'Duration', value: song.formattedDuration, inline: true },
-        { name: 'Position', value: `${queue.songs.length}`, inline: true }
-      ],
-      thumbnail: { url: song.thumbnail }
-    }]
-  });
-});
-
-client.distube.on('error', (channel, error) => {
-  console.error('DisTube error:', error);
-  if (channel) channel.send(`❌ An error occurred: ${error.message.slice(0, 100)}`);
 });
 
 // Message Handler

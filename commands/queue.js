@@ -2,33 +2,24 @@ module.exports = {
   name: 'queue',
   description: 'Show the music queue',
   execute(message, args, client) {
-    const queue = client.distube.getQueue(message);
-    if (!queue) return message.reply('❌ Nothing is playing!');
+    const queue = client.player.nodes.get(message.guild.id);
+    if (!queue || !queue.tracks.data.length) {
+      return message.reply('❌ Queue is empty!');
+    }
 
-    const queueString = queue.songs.map((song, id) =>
-      `**${id + 1}.** ${song.name} - \`${song.formattedDuration}\``
-    ).slice(0, 10).join('\n');
+    const tracks = queue.tracks.data.slice(0, 10);
+    const queueString = tracks.map((track, i) =>
+      `**${i + 1}.** ${track.title} - \`${track.duration}\``
+    ).join('\n');
 
     message.reply({
       embeds: [{
         color: 0x0099ff,
         title: '📜 Music Queue',
-        description: queueString || 'No songs in queue',
+        description: queueString,
         fields: [
-          {
-            name: 'Now Playing',
-            value: `${queue.songs[0].name} - \`${queue.songs[0].formattedDuration}\``
-          },
-          {
-            name: 'Total Songs',
-            value: `${queue.songs.length}`,
-            inline: true
-          },
-          {
-            name: 'Duration',
-            value: `${queue.formattedDuration}`,
-            inline: true
-          }
+          { name: 'Now Playing', value: queue.currentTrack ? queue.currentTrack.title : 'None' },
+          { name: 'Total Songs', value: `${queue.tracks.data.length}`, inline: true }
         ]
       }]
     });
