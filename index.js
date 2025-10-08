@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, ActivityType } = require('discord.js');
 const { Player } = require('discord-player');
-const { YouTubeExtractor } = require('@discord-player/extractor');
+const { YoutubeExtractor } = require('discord-player-youtubei');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -90,7 +90,12 @@ client.once('clientReady', async () => {
 
   // Register YouTube extractor after client is ready
   try {
-    await player.extractors.register(YouTubeExtractor, {});
+    await player.extractors.register(YoutubeExtractor, {
+      authentication: process.env.YOUTUBE_COOKIE || undefined,
+      streamOptions: {
+        useClient: 'WEB'
+      }
+    });
     console.log('🎵 YouTube extractor registered successfully');
   } catch (error) {
     console.error('Failed to register YouTube extractor:', error);

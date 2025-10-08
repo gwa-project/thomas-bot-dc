@@ -52,8 +52,11 @@ jobs:
             git clone $REPO_URL .
           fi
 
-          # Install/Update dependencies
-          echo "📦 Installing dependencies..."
+          # Clean install dependencies
+          echo "📦 Cleaning old dependencies..."
+          rm -rf node_modules package-lock.json
+
+          echo "📦 Installing fresh dependencies..."
           npm install --production
 
           # Create/Update .env file
