@@ -1,23 +1,12 @@
-const { getQueue } = require('../utils/musicManager');
-
 module.exports = {
   name: 'pause',
   description: 'Pause the current song',
-  async execute(message, args, client, PREFIX) {
-    const queue = getQueue(message.guild.id);
+  execute(message, args, client) {
+    const queue = client.distube.getQueue(message);
+    if (!queue) return message.reply('❌ Nothing is playing!');
+    if (queue.paused) return message.reply('⏸ The song is already paused!');
 
-    if (!queue || !queue.isPlaying) {
-      return message.reply('❌ Nothing is playing right now!');
-    }
-
-    if (!message.member.voice.channel) {
-      return message.reply('❌ You need to be in a voice channel!');
-    }
-
-    if (queue.pause()) {
-      message.reply('⏸️ Paused the music');
-    } else {
-      message.reply('❌ Failed to pause');
-    }
+    client.distube.pause(message);
+    message.reply('⏸ Paused the song!');
   },
 };

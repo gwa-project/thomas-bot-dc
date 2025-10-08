@@ -1,23 +1,15 @@
-const { getQueue } = require('../utils/musicManager');
-
 module.exports = {
   name: 'skip',
   description: 'Skip the current song',
-  async execute(message, args, client, PREFIX) {
-    const queue = getQueue(message.guild.id);
+  execute(message, args, client) {
+    const queue = client.distube.getQueue(message);
+    if (!queue) return message.reply('❌ Nothing is playing!');
 
-    if (!queue || !queue.isPlaying) {
-      return message.reply('❌ Nothing is playing right now!');
-    }
-
-    if (!message.member.voice.channel) {
-      return message.reply('❌ You need to be in a voice channel!');
-    }
-
-    if (queue.skip()) {
-      message.reply('⏭️ Skipped the current song');
-    } else {
-      message.reply('❌ Failed to skip');
+    try {
+      client.distube.skip(message);
+      message.reply('⏭ Skipped the song!');
+    } catch (error) {
+      message.reply('❌ There is no next song in queue!');
     }
   },
 };

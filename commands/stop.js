@@ -1,20 +1,11 @@
-const { getQueue, deleteQueue } = require('../utils/musicManager');
-
 module.exports = {
   name: 'stop',
-  description: 'Stop music and clear queue',
-  async execute(message, args, client, PREFIX) {
-    const queue = getQueue(message.guild.id);
+  description: 'Stop the music and clear the queue',
+  execute(message, args, client) {
+    const queue = client.distube.getQueue(message);
+    if (!queue) return message.reply('❌ Nothing is playing!');
 
-    if (!queue || !queue.isPlaying) {
-      return message.reply('❌ Nothing is playing right now!');
-    }
-
-    if (!message.member.voice.channel) {
-      return message.reply('❌ You need to be in a voice channel!');
-    }
-
-    deleteQueue(message.guild.id);
-    message.reply('⏹️ Stopped the music and cleared the queue');
+    client.distube.stop(message);
+    message.reply('⏹ Stopped the music and cleared the queue!');
   },
 };

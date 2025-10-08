@@ -1,36 +1,31 @@
-const { getQueue } = require('../utils/musicManager');
-
 module.exports = {
   name: 'nowplaying',
-  description: 'Show currently playing song',
-  async execute(message, args, client, PREFIX) {
-    const queue = getQueue(message.guild.id);
+  description: 'Show the currently playing song',
+  execute(message, args, client) {
+    const queue = client.distube.getQueue(message);
+    if (!queue) return message.reply('❌ Nothing is playing!');
 
-    if (!queue || !queue.isPlaying || !queue.currentSong) {
-      return message.reply('❌ Nothing is playing right now!');
-    }
-
-    const song = queue.currentSong;
+    const song = queue.songs[0];
 
     message.reply({
       embeds: [{
         color: 0x00ff00,
         title: '🎵 Now Playing',
-        description: `[${song.title}](${song.url})`,
+        description: `[${song.name}](${song.url})`,
         fields: [
           {
             name: 'Duration',
-            value: song.duration,
+            value: song.formattedDuration,
             inline: true
           },
           {
             name: 'Requested by',
-            value: song.requester,
+            value: song.user.tag,
             inline: true
           },
           {
-            name: 'Queue',
-            value: `${queue.songs.length - 1} song(s) remaining`,
+            name: 'Volume',
+            value: `${queue.volume}%`,
             inline: true
           }
         ],
