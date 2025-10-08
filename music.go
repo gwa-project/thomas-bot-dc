@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 	"sync"
 
@@ -65,15 +66,21 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 
 	query := joinArgs(args)
 
+	log.Printf("Play command from %s in guild %s: %s", m.Author.Username, m.GuildID, query)
+
 	// Send searching message
 	searchMsg, _ := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔍 Searching for **%s**...", query))
 
 	// Search with yt-dlp
 	title, url, err := searchYouTube(query)
 	if err != nil {
-		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to find song!")
+		errMsg := fmt.Sprintf("❌ Failed to find song!\n```\nError: %v```", err)
+		log.Printf("ERROR: Failed to search YouTube for '%s': %v", query, err)
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
 		return
 	}
+
+	log.Printf("Found song: %s (%s)", title, url)
 
 	// Add to queue
 	queue := getQueue(m.GuildID)
@@ -179,6 +186,8 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func searchYouTube(query string) (string, string, error) {
+	log.Printf("Searching YouTube for: %s", query)
+
 	// Use yt-dlp to search
 	cmd := exec.Command("yt-dlp",
 		"--default-search", "ytsearch",
@@ -188,30 +197,46 @@ func searchYouTube(query string) (string, string, error) {
 		query,
 	)
 
-	output, err := cmd.Output()
+	log.Printf("Running command: yt-dlp --default-search ytsearch --get-title --get-id --no-playlist %s", query)
+
+	output, err := cmd.CombinedOutput() // Get both stdout and stderr
 	if err != nil {
-		return "", "", err
+		log.Printf("ERROR: yt-dlp command failed: %v", err)
+		log.Printf("ERROR: yt-dlp output: %s", string(output))
+		return "", "", fmt.Errorf("yt-dlp failed: %v (output: %s)", err, string(output))
 	}
+
+	log.Printf("yt-dlp raw output: %s", string(output))
 
 	// Parse output (first line = title, second line = ID)
 	lines := splitLines(string(output))
 	if len(lines) < 2 {
-		return "", "", fmt.Errorf("invalid output")
+		log.Printf("ERROR: Invalid yt-dlp output, expected 2+ lines, got %d lines", len(lines))
+		log.Printf("ERROR: Lines received: %v", lines)
+		return "", "", fmt.Errorf("invalid output: expected 2+ lines, got %d (output: %s)", len(lines), string(output))
 	}
 
 	title := lines[0]
-	url := "https://youtube.com/watch?v=" + lines[1]
+	videoID := lines[1]
+	url := "https://youtube.com/watch?v=" + videoID
+
+	log.Printf("Parsed - Title: %s, Video ID: %s", title, videoID)
 
 	return title, url, nil
 }
 
 func playMusic(s *discordgo.Session, guildID, voiceChannelID, textChannelID string, queue *MusicQueue) {
+	log.Printf("Starting playback for guild %s in voice channel %s", guildID, voiceChannelID)
+
 	// Join voice channel
 	vc, err := s.ChannelVoiceJoin(guildID, voiceChannelID, false, true)
 	if err != nil {
+		log.Printf("ERROR: Failed to join voice channel %s: %v", voiceChannelID, err)
 		s.ChannelMessageSend(textChannelID, "❌ Failed to join voice channel!")
 		return
 	}
+
+	log.Printf("Successfully joined voice channel %s", voiceChannelID)
 
 	queue.mu.Lock()
 	queue.VoiceConn = vc
