@@ -27,9 +27,6 @@ const client = new Client({
 const player = new Player(client);
 client.player = player;
 
-// Register YouTube extractor
-player.extractors.register(YouTubeExtractor, {});
-
 // Load Commands
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
@@ -67,7 +64,7 @@ app.listen(PORT, () => {
 });
 
 // Bot Ready Event
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log('========================================');
   console.log(`✅ Bot is online as ${client.user.tag}`);
   console.log(`📝 Prefix: ${PREFIX}`);
@@ -75,6 +72,14 @@ client.once('clientReady', () => {
   console.log(`🌐 Serving ${client.guilds.cache.size} servers`);
   console.log(`🔧 Loaded ${client.commands.size} commands`);
   console.log('========================================');
+
+  // Register YouTube extractor after client is ready
+  try {
+    await player.extractors.register(YouTubeExtractor, {});
+    console.log('🎵 YouTube extractor registered successfully');
+  } catch (error) {
+    console.error('Failed to register YouTube extractor:', error);
+  }
 
   // Set bot status: Idle + Listening to new music
   client.user.setPresence({
