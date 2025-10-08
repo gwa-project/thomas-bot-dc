@@ -1,4 +1,4 @@
-name: Deploy Discord Bot to VPS
+name: Deploy Golang Bot to VPS
 
 on:
   push:
@@ -7,14 +7,36 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to VPS
+    name: Build and Deploy Golang Bot
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Deploy via SSH
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Build binary
+      run: |
+        cd thomas-bot-dc
+        go mod download
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o thomas-bot .
+
+    - name: Deploy to VPS
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        source: "thomas-bot-dc/thomas-bot"
+        target: "/tmp/"
+        strip_components: 1
+
+    - name: Setup and Start Bot
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.VPS_HOST }}
@@ -25,66 +47,83 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "🚀 Deploying Discord Bot to VPS"
+          echo "🚀 Deploying Golang Discord Bot"
           echo "=========================================="
 
-          # Define variables
-          DEPLOY_PATH="/var/www/discord-bot"
-          REPO_URL="https://github.com/${{ github.repository }}.git"
-          PM2_APP_NAME="thomas-bot"
-
-          # Create deploy directory if not exists
-          if [ ! -d "$DEPLOY_PATH" ]; then
-            echo "📁 Creating deploy directory..."
-            mkdir -p $DEPLOY_PATH
+          # Stop old Node.js bot if exists
+          if pm2 describe thomas-bot > /dev/null 2>&1; then
+            echo "⏹ Stopping old Node.js bot..."
+            pm2 delete thomas-bot
+            pm2 save
           fi
 
+          # Clean old Node.js files
+          if [ -d "/var/www/discord-bot" ]; then
+            echo "🗑️ Removing old Node.js bot files..."
+            rm -rf /var/www/discord-bot
+          fi
+
+          # Create new directory for Golang bot
+          DEPLOY_PATH="/var/www/thomas-bot"
+          mkdir -p $DEPLOY_PATH
+
+          # Move binary
+          echo "📦 Moving binary..."
+          mv /tmp/thomas-bot $DEPLOY_PATH/
+          chmod +x $DEPLOY_PATH/thomas-bot
+
+          # Install yt-dlp and ffmpeg if not exists
+          if ! command -v yt-dlp &> /dev/null; then
+            echo "📥 Installing yt-dlp..."
+            wget -q https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+            chmod +x /usr/local/bin/yt-dlp
+          fi
+
+          if ! command -v ffmpeg &> /dev/null; then
+            echo "📥 Installing ffmpeg..."
+            apt-get update && apt-get install -y ffmpeg
+          fi
+
+          # Create .env file
           cd $DEPLOY_PATH
-
-          # Clone or pull repository
-          if [ -d ".git" ]; then
-            echo "📥 Pulling latest changes..."
-            git fetch origin
-            git reset --hard origin/main
-            git clean -fd
-          else
-            echo "📥 Cloning repository..."
-            git clone $REPO_URL .
-          fi
-
-          # Clean install dependencies
-          echo "📦 Cleaning old dependencies..."
-          rm -rf node_modules package-lock.json
-
-          echo "📦 Installing fresh dependencies..."
-          npm install --production
-
-          # Create/Update .env file
-          echo "⚙️ Updating environment variables..."
           cat > .env << 'EOF'
           DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
           CLIENT_ID=${{ secrets.CLIENT_ID }}
           PUBLIC_KEY=${{ secrets.PUBLIC_KEY }}
-          NODE_ENV=production
           PORT=8080
           EOF
 
-          # Check if PM2 process exists
-          if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
-            echo "🔄 Restarting bot with PM2..."
-            pm2 restart $PM2_APP_NAME --update-env
-          else
-            echo "🚀 Starting bot with PM2..."
-            pm2 start index.js --name $PM2_APP_NAME
-            pm2 save
-          fi
+          # Create systemd service
+          cat > /etc/systemd/system/thomas-bot.service << 'SYSTEMD_EOF'
+          [Unit]
+          Description=Thomas Discord Bot (Golang)
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/var/www/thomas-bot
+          ExecStart=/var/www/thomas-bot/thomas-bot
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          SYSTEMD_EOF
+
+          # Reload systemd and start bot
+          echo "🔄 Starting bot service..."
+          systemctl daemon-reload
+          systemctl enable thomas-bot
+          systemctl restart thomas-bot
 
           # Show status
+          sleep 2
           echo ""
           echo "=========================================="
           echo "✅ Deployment Complete!"
           echo "=========================================="
-          pm2 status
+          systemctl status thomas-bot --no-pager -l
 
     - name: Show Bot Logs
       if: always()
@@ -96,4 +135,4 @@ jobs:
         port: 22
         script: |
           echo "📋 Recent bot logs:"
-          pm2 logs thomas-bot --lines 30 --nostream || echo "⚠️ No logs yet"
+          journalctl -u thomas-bot -n 30 --no-pager || echo "⚠️ No logs yet"
