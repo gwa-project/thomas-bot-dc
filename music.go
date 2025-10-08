@@ -238,7 +238,7 @@ func playMusic(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 
 		// Download and play with yt-dlp + ffmpeg
 		// This is simplified - in production you'd want better audio handling
-		cmd := exec.Command("yt-dlp",
+		_ = exec.Command("yt-dlp",
 			"-f", "bestaudio",
 			"-o", "-",
 			currentSong.URL,
@@ -246,7 +246,7 @@ func playMusic(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 
 		// Note: Actual audio streaming would require DCA encoding
 		// This is a placeholder for the concept
-		s.ChannelMessageSend(textChannelID, fmt.Sprintf("⚠️ Playing: **%s** (simplified playback - full implementation requires DCA)", currentSong.Title))
+		s.ChannelMessageSend(textChannelID, fmt.Sprintf("⚠️ Playing: **%s** (Music streaming coming soon - basic implementation)", currentSong.Title))
 
 		// Simulate playback (in production, stream audio to voice)
 		// time.Sleep(3 * time.Minute)
