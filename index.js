@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, ActivityType } = require('discord.js');
 const { DisTube } = require('distube');
+const { YtDlpPlugin } = require('@distube/yt-dlp');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -22,7 +23,7 @@ const client = new Client({
   ],
 });
 
-// Initialize DisTube
+// Initialize DisTube with yt-dlp plugin
 client.distube = new DisTube(client, {
   emitNewSongOnly: true,
   leaveOnEmpty: true,
@@ -31,7 +32,8 @@ client.distube = new DisTube(client, {
   savePreviousSongs: true,
   searchSongs: 5,
   nsfw: false,
-  emptyCooldown: 60
+  emptyCooldown: 60,
+  plugins: [new YtDlpPlugin()]
 });
 
 // Load Commands
