@@ -46,6 +46,8 @@ func main() {
 	// Register event handlers
 	dg.AddHandler(messageCreate)
 	dg.AddHandler(ready)
+	dg.AddHandler(voiceStateUpdate)
+	dg.AddHandler(voiceServerUpdate)
 
 	// Set intents
 	dg.Identify.Intents = discordgo.IntentsGuilds |
@@ -148,6 +150,31 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	default:
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ Unknown command. Use `%shelp` to see available commands.", PREFIX))
 	}
+}
+
+func voiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceStateUpdate) {
+	if lavalinkClient == nil {
+		return
+	}
+
+	if event.UserID != s.State.User.ID {
+		return
+	}
+
+	var channelID *string
+	if event.ChannelID != "" {
+		channelID = &event.ChannelID
+	}
+
+	lavalinkClient.OnVoiceStateUpdate(s.State.User.ID, event.GuildID, channelID, event.SessionID)
+}
+
+func voiceServerUpdate(s *discordgo.Session, event *discordgo.VoiceServerUpdate) {
+	if lavalinkClient == nil {
+		return
+	}
+
+	lavalinkClient.OnVoiceServerUpdate(s.State.User.ID, event.GuildID, event.Token, event.Endpoint)
 }
 
 func startHTTPServer(dg *discordgo.Session) {

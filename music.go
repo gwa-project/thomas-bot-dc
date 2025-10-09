@@ -51,7 +51,7 @@ func initLavalink(session *discordgo.Session) error {
 	})
 
 	if err != nil {
-		return fmt.errorf("failed to add node: %v", err)
+		return fmt.Errorf("failed to add node: %v", err)
 	}
 
 	log.Printf("✅ Lavalink node added: %s", node.Config().Name)
@@ -137,57 +137,49 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 
 	var track lavalink.Track
 
+	// Build query string
+	queryStr := query
 	if searchPrefix != "" {
-		// Search YouTube
-		result, err := lavalinkClient.BestNode().LoadTracksHandler(ctx, searchPrefix.Apply(query))
-		if err != nil {
-			errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
-			log.Printf("ERROR: Failed to search: %v", err)
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
-			return
-		}
-
-		switch data := result.Data.(type) {
-		case lavalink.SearchResult:
-			if len(data.Tracks) == 0 {
-				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
-				return
-			}
-			track = data.Tracks[0]
-		default:
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
-			return
-		}
-	} else {
-		// Direct URL
-		result, err := lavalinkClient.BestNode().LoadTracksHandler(ctx, query)
-		if err != nil {
-			errMsg := fmt.Sprintf("❌ Failed to load URL!\n```\nError: %v```", err)
-			log.Printf("ERROR: Failed to load URL: %v", err)
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
-			return
-		}
-
-		switch data := result.Data.(type) {
-		case lavalink.TrackResult:
-			track = data.Track
-		case lavalink.PlaylistResult:
-			if len(data.Tracks) == 0 {
-				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Playlist is empty!")
-				return
-			}
-			track = data.Tracks[0]
-		case lavalink.SearchResult:
-			if len(data.Tracks) == 0 {
-				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
-				return
-			}
-			track = data.Tracks[0]
-		default:
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
-			return
-		}
+		queryStr = searchPrefix.Apply(query)
 	}
+
+	// Load tracks with handler
+	var foundTrack *lavalink.Track
+	err = lavalinkClient.BestNode().LoadTracksHandler(ctx, queryStr, disgolink.NewResultHandler(
+		func(track lavalink.Track) {
+			foundTrack = &track
+		},
+		func(playlist lavalink.Playlist) {
+			if len(playlist.Tracks) > 0 {
+				foundTrack = &playlist.Tracks[0]
+			}
+		},
+		func(tracks []lavalink.Track) {
+			if len(tracks) > 0 {
+				foundTrack = &tracks[0]
+			}
+		},
+		func() {
+			// No matches
+		},
+		func(err error) {
+			log.Printf("ERROR: Load failed: %v", err)
+		},
+	))
+
+	if err != nil {
+		errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
+		log.Printf("ERROR: Failed to search: %v", err)
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
+		return
+	}
+
+	if foundTrack == nil {
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
+		return
+	}
+
+	track = *foundTrack
 
 	log.Printf("Found track: %s - %s", track.Info.Title, track.Info.Author)
 
@@ -208,7 +200,7 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 		go playTrack(s, m.GuildID, voiceChannelID, m.ChannelID)
 	} else {
 		// Added to queue
-		duration := formatDuration(track.Info.Length)
+		duration := formatDuration(time.Duration(track.Info.Length) * time.Millisecond)
 		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, fmt.Sprintf("➕ Added to queue: **%s** by %s `[%s]` (Position: %d)", track.Info.Title, track.Info.Author, duration, queueLength))
 	}
 }
@@ -238,16 +230,8 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 
 	// Update voice state
 	guildSnowflake, _ := snowflake.Parse(guildID)
-	channelSnowflake, _ := snowflake.Parse(voiceChannelID)
 
-	if err := lavalinkClient.Player(guildSnowflake).Update(context.Background(), lavalink.WithVoiceState(
-		vc.SessionID,
-		channelSnowflake,
-		vc.Endpoint,
-		vc.Token,
-	)); err != nil {
-		log.Printf("ERROR: Failed to update voice state: %v", err)
-	}
+	// Note: Voice state is updated via Discord gateway events automatically
 
 	// Get current track
 	player.mu.Lock()
@@ -382,7 +366,7 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	queueText := ""
 	for i, track := range player.Queue {
-		duration := formatDuration(track.Info.Length)
+		duration := formatDuration(time.Duration(track.Info.Length) * time.Millisecond)
 		if i == 0 {
 			queueText += fmt.Sprintf("**Now Playing:**\n🎵 %s - %s `[%s]`\n\n", track.Info.Title, track.Info.Author, duration)
 		} else if i < 10 {
@@ -404,16 +388,4 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
-}
-
-func formatDuration(ms lavalink.Duration) string {
-	duration := time.Duration(ms) * time.Millisecond
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	seconds := int(duration.Seconds()) % 60
-
-	if hours > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
-	}
-	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }
