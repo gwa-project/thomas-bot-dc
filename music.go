@@ -188,8 +188,9 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 func searchYouTube(query string) (string, string, error) {
 	log.Printf("Searching YouTube for: %s", query)
 
-	// Use yt-dlp to search
+	// Use yt-dlp to search with cookies
 	cmd := exec.Command("yt-dlp",
+		"--cookies", "/var/www/thomas-bot/youtube_cookies.txt",
 		"--default-search", "ytsearch",
 		"--get-title",
 		"--get-id",
