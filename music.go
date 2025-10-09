@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/gompus/snowflake"
-	"github.com/lavalink-devs/lavalink-go/lavalink"
+	"github.com/disgoorg/disgolink/v3/disgolink"
+	"github.com/disgoorg/disgolink/v3/lavalink"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 var (
-	lavalinkClient *lavalink.Client
+	lavalinkClient disgolink.Client
 	players        = make(map[string]*MusicPlayer)
 	playersMu      sync.Mutex
 )
@@ -29,42 +30,52 @@ type MusicPlayer struct {
 func initLavalink(session *discordgo.Session) error {
 	log.Println("🎵 Initializing Lavalink client...")
 
-	lavalinkClient = lavalink.NewClient(
-		snowflake.MustParse(session.State.User.ID),
+	userID, err := snowflake.Parse(session.State.User.ID)
+	if err != nil {
+		return fmt.Errorf("failed to parse user ID: %v", err)
+	}
+
+	lavalinkClient = disgolink.New(userID,
+		disgolink.WithListenerFunc(onPlayerUpdate),
+		disgolink.WithListenerFunc(onTrackStart),
+		disgolink.WithListenerFunc(onTrackEnd),
+		disgolink.WithListenerFunc(onTrackException),
 	)
 
-	node := lavalink.NodeConfig{
-		Name:      "local",
-		Address:   "127.0.0.1:2333",
-		Password:  "youshallnotpass",
-		Secure:    false,
-		SessionID: "",
+	// Add node
+	node, err := lavalinkClient.AddNode(context.Background(), disgolink.NodeConfig{
+		Name:     "local",
+		Address:  "127.0.0.1:2333",
+		Password: "youshallnotpass",
+		Secure:   false,
+	})
+
+	if err != nil {
+		return fmt.errorf("failed to add node: %v", err)
 	}
 
-	if err := lavalinkClient.AddNode(context.Background(), node); err != nil {
-		return fmt.Errorf("failed to add Lavalink node: %v", err)
-	}
-
-	// Event handlers
-	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track) {
-		log.Printf("🎵 Track started: %s", track.Info.Title)
-	})
-
-	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track, err lavalink.Exception) {
-		log.Printf("❌ Track exception: %s - %s", track.Info.Title, err.Message)
-	})
-
-	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track, reason lavalink.TrackEndReason) {
-		log.Printf("Track ended: %s (reason: %s)", track.Info.Title, reason)
-
-		if reason == lavalink.TrackEndReasonFinished || reason == lavalink.TrackEndReasonLoadFailed {
-			// Play next in queue
-			go handleNextTrack(p.GuildID().String())
-		}
-	})
-
-	log.Println("✅ Lavalink client initialized")
+	log.Printf("✅ Lavalink node added: %s", node.Config().Name)
 	return nil
+}
+
+func onPlayerUpdate(player disgolink.Player, event lavalink.PlayerUpdateMessage) {
+	// Player position update
+}
+
+func onTrackStart(player disgolink.Player, event lavalink.TrackStartEvent) {
+	log.Printf("🎵 Track started: %s", event.Track.Info.Title)
+}
+
+func onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) {
+	log.Printf("⏹ Track ended: %s (reason: %s)", event.Track.Info.Title, event.Reason)
+
+	if event.Reason == lavalink.TrackEndReasonFinished || event.Reason == lavalink.TrackEndReasonLoadFailed {
+		go handleNextTrack(player.GuildID().String())
+	}
+}
+
+func onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
+	log.Printf("❌ Track exception: %s - %s", event.Track.Info.Title, event.Exception.Message)
 }
 
 func getPlayer(guildID string) *MusicPlayer {
@@ -116,7 +127,7 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 	searchMsg, _ := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔍 Searching for **%s**...", query))
 
 	// Search with Lavalink
-	searchPrefix := "ytsearch:"
+	searchPrefix := lavalink.SearchTypeYouTube
 	if strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://") {
 		searchPrefix = ""
 	}
@@ -124,36 +135,58 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	result, err := lavalinkClient.LoadTracks(ctx, searchPrefix+query)
-	if err != nil {
-		errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
-		log.Printf("ERROR: Failed to search: %v", err)
-		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
-		return
-	}
-
 	var track lavalink.Track
 
-	switch result.LoadType {
-	case lavalink.LoadTypeTrack:
-		track = result.Data.(lavalink.Track)
-	case lavalink.LoadTypeSearch:
-		tracks := result.Data.([]lavalink.Track)
-		if len(tracks) == 0 {
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
+	if searchPrefix != "" {
+		// Search YouTube
+		result, err := lavalinkClient.BestNode().LoadTracksHandler(ctx, searchPrefix.Apply(query))
+		if err != nil {
+			errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
+			log.Printf("ERROR: Failed to search: %v", err)
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
 			return
 		}
-		track = tracks[0]
-	case lavalink.LoadTypePlaylist:
-		playlist := result.Data.(lavalink.Playlist)
-		if len(playlist.Tracks) == 0 {
-			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Playlist is empty!")
+
+		switch data := result.Data.(type) {
+		case lavalink.SearchResult:
+			if len(data.Tracks) == 0 {
+				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
+				return
+			}
+			track = data.Tracks[0]
+		default:
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
 			return
 		}
-		track = playlist.Tracks[0]
-	default:
-		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
-		return
+	} else {
+		// Direct URL
+		result, err := lavalinkClient.BestNode().LoadTracksHandler(ctx, query)
+		if err != nil {
+			errMsg := fmt.Sprintf("❌ Failed to load URL!\n```\nError: %v```", err)
+			log.Printf("ERROR: Failed to load URL: %v", err)
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
+			return
+		}
+
+		switch data := result.Data.(type) {
+		case lavalink.TrackResult:
+			track = data.Track
+		case lavalink.PlaylistResult:
+			if len(data.Tracks) == 0 {
+				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Playlist is empty!")
+				return
+			}
+			track = data.Tracks[0]
+		case lavalink.SearchResult:
+			if len(data.Tracks) == 0 {
+				s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
+				return
+			}
+			track = data.Tracks[0]
+		default:
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
+			return
+		}
 	}
 
 	log.Printf("Found track: %s - %s", track.Info.Title, track.Info.Author)
@@ -193,7 +226,8 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 	player.mu.Unlock()
 
 	// Join voice channel
-	if err := s.ChannelVoiceJoinManual(guildID, voiceChannelID, false, false); err != nil {
+	vc, err := s.ChannelVoiceJoin(guildID, voiceChannelID, false, false)
+	if err != nil {
 		log.Printf("ERROR: Failed to join voice channel: %v", err)
 		s.ChannelMessageSend(textChannelID, "❌ Failed to join voice channel!")
 		player.mu.Lock()
@@ -202,8 +236,18 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 		return
 	}
 
-	// Update voice server
-	lavalinkClient.UpdateVoiceState(context.Background(), snowflake.MustParse(guildID), voiceChannelID, false, false)
+	// Update voice state
+	guildSnowflake, _ := snowflake.Parse(guildID)
+	channelSnowflake, _ := snowflake.Parse(voiceChannelID)
+
+	if err := lavalinkClient.Player(guildSnowflake).Update(context.Background(), lavalink.WithVoiceState(
+		vc.SessionID,
+		channelSnowflake,
+		vc.Endpoint,
+		vc.Token,
+	)); err != nil {
+		log.Printf("ERROR: Failed to update voice state: %v", err)
+	}
 
 	// Get current track
 	player.mu.Lock()
@@ -216,10 +260,9 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 	player.mu.Unlock()
 
 	// Play track
-	guildSnowflake := snowflake.MustParse(guildID)
 	ctx := context.Background()
 
-	if err := lavalinkClient.Player(guildSnowflake).Play(ctx, track); err != nil {
+	if err := lavalinkClient.Player(guildSnowflake).Update(ctx, lavalink.WithTrack(track)); err != nil {
 		log.Printf("ERROR: Failed to play track: %v", err)
 		s.ChannelMessageSend(textChannelID, fmt.Sprintf("❌ Failed to play: %s", track.Info.Title))
 
@@ -256,10 +299,10 @@ func handleNextTrack(guildID string) {
 	player.mu.Unlock()
 
 	// Play next track
-	guildSnowflake := snowflake.MustParse(guildID)
+	guildSnowflake, _ := snowflake.Parse(guildID)
 	ctx := context.Background()
 
-	if err := lavalinkClient.Player(guildSnowflake).Play(ctx, nextTrack); err != nil {
+	if err := lavalinkClient.Player(guildSnowflake).Update(ctx, lavalink.WithTrack(nextTrack)); err != nil {
 		log.Printf("ERROR: Failed to play next track: %v", err)
 
 		// Remove failed track and try next
@@ -285,7 +328,7 @@ func handleStop(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	// Stop playback
-	guildSnowflake := snowflake.MustParse(m.GuildID)
+	guildSnowflake, _ := snowflake.Parse(m.GuildID)
 	ctx := context.Background()
 
 	if err := lavalinkClient.Player(guildSnowflake).Destroy(ctx); err != nil {
@@ -297,9 +340,7 @@ func handleStop(s *discordgo.Session, m *discordgo.MessageCreate) {
 	player.IsPlaying = false
 
 	// Leave voice channel
-	if err := s.ChannelVoiceJoinManual(m.GuildID, "", false, false); err != nil {
-		log.Printf("ERROR: Failed to leave voice channel: %v", err)
-	}
+	s.ChannelVoiceJoin(m.GuildID, "", false, false)
 
 	s.ChannelMessageSend(m.ChannelID, "⏹ Stopped the music!")
 }
@@ -316,10 +357,10 @@ func handleSkip(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	// Skip current song
-	guildSnowflake := snowflake.MustParse(m.GuildID)
+	guildSnowflake, _ := snowflake.Parse(m.GuildID)
 	ctx := context.Background()
 
-	if err := lavalinkClient.Player(guildSnowflake).Stop(ctx); err != nil {
+	if err := lavalinkClient.Player(guildSnowflake).Update(ctx, lavalink.WithNullTrack()); err != nil {
 		log.Printf("ERROR: Failed to skip: %v", err)
 		s.ChannelMessageSend(m.ChannelID, "❌ Failed to skip!")
 		return
@@ -365,7 +406,7 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 }
 
-func formatDuration(ms int64) string {
+func formatDuration(ms lavalink.Duration) string {
 	duration := time.Duration(ms) * time.Millisecond
 	hours := int(duration.Hours())
 	minutes := int(duration.Minutes()) % 60
