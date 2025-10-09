@@ -32,7 +32,7 @@ jobs:
         username: ${{ secrets.VPS_USERNAME }}
         password: ${{ secrets.VPS_PASSWORD }}
         port: 22
-        source: "thomas-bot"
+        source: "thomas-bot,thomas-bot-dc/youtube_cookies.txt"
         target: "/tmp/"
 
     - name: Setup and Start Bot
@@ -66,10 +66,13 @@ jobs:
           DEPLOY_PATH="/var/www/thomas-bot"
           mkdir -p $DEPLOY_PATH
 
-          # Move binary
+          # Move binary and cookies
           echo "📦 Moving binary..."
           mv /tmp/thomas-bot $DEPLOY_PATH/
           chmod +x $DEPLOY_PATH/thomas-bot
+
+          echo "🍪 Moving YouTube cookies..."
+          mv /tmp/thomas-bot-dc/youtube_cookies.txt $DEPLOY_PATH/ || echo "⚠️ Cookies not found, will use without auth"
 
           # Install yt-dlp and ffmpeg if not exists
           if ! command -v yt-dlp &> /dev/null; then
