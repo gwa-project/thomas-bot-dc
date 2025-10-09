@@ -1,52 +1,97 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"os/exec"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/gompus/snowflake"
+	"github.com/lavalink-devs/lavalink-go/lavalink"
 )
 
-type MusicQueue struct {
-	GuildID    string
-	Songs      []Song
-	IsPlaying  bool
-	VoiceConn  *discordgo.VoiceConnection
-	mu         sync.Mutex
+var (
+	lavalinkClient *lavalink.Client
+	players        = make(map[string]*MusicPlayer)
+	playersMu      sync.Mutex
+)
+
+type MusicPlayer struct {
+	GuildID   string
+	Queue     []lavalink.Track
+	IsPlaying bool
+	mu        sync.Mutex
 }
 
-type Song struct {
-	Title     string
-	URL       string
-	Requester string
-}
+func initLavalink(session *discordgo.Session) error {
+	log.Println("🎵 Initializing Lavalink client...")
 
-var queues = make(map[string]*MusicQueue)
-var queuesMu sync.Mutex
+	lavalinkClient = lavalink.NewClient(
+		snowflake.MustParse(session.State.User.ID),
+	)
 
-func getQueue(guildID string) *MusicQueue {
-	queuesMu.Lock()
-	defer queuesMu.Unlock()
-
-	if q, exists := queues[guildID]; exists {
-		return q
+	node := lavalink.NodeConfig{
+		Name:      "local",
+		Address:   "127.0.0.1:2333",
+		Password:  "youshallnotpass",
+		Secure:    false,
+		SessionID: "",
 	}
 
-	q := &MusicQueue{
+	if err := lavalinkClient.AddNode(context.Background(), node); err != nil {
+		return fmt.Errorf("failed to add Lavalink node: %v", err)
+	}
+
+	// Event handlers
+	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track) {
+		log.Printf("🎵 Track started: %s", track.Info.Title)
+	})
+
+	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track, err lavalink.Exception) {
+		log.Printf("❌ Track exception: %s - %s", track.Info.Title, err.Message)
+	})
+
+	lavalinkClient.AddEventHandler(func(p lavalink.Player, track lavalink.Track, reason lavalink.TrackEndReason) {
+		log.Printf("Track ended: %s (reason: %s)", track.Info.Title, reason)
+
+		if reason == lavalink.TrackEndReasonFinished || reason == lavalink.TrackEndReasonLoadFailed {
+			// Play next in queue
+			go handleNextTrack(p.GuildID().String())
+		}
+	})
+
+	log.Println("✅ Lavalink client initialized")
+	return nil
+}
+
+func getPlayer(guildID string) *MusicPlayer {
+	playersMu.Lock()
+	defer playersMu.Unlock()
+
+	if p, exists := players[guildID]; exists {
+		return p
+	}
+
+	p := &MusicPlayer{
 		GuildID: guildID,
-		Songs:   []Song{},
+		Queue:   []lavalink.Track{},
 	}
-	queues[guildID] = q
-	return q
+	players[guildID] = p
+	return p
 }
 
 func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 	// Check if user is in voice channel
-	guild, _ := s.State.Guild(m.GuildID)
-	var voiceChannelID string
+	guild, err := s.State.Guild(m.GuildID)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "❌ Failed to get guild info!")
+		return
+	}
 
+	var voiceChannelID string
 	for _, vs := range guild.VoiceStates {
 		if vs.UserID == m.Author.ID {
 			voiceChannelID = vs.ChannelID
@@ -64,113 +109,248 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 		return
 	}
 
-	query := joinArgs(args)
-
+	query := strings.Join(args, " ")
 	log.Printf("Play command from %s in guild %s: %s", m.Author.Username, m.GuildID, query)
 
 	// Send searching message
 	searchMsg, _ := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔍 Searching for **%s**...", query))
 
-	// Search with yt-dlp
-	title, url, err := searchYouTube(query)
+	// Search with Lavalink
+	searchPrefix := "ytsearch:"
+	if strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://") {
+		searchPrefix = ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := lavalinkClient.LoadTracks(ctx, searchPrefix+query)
 	if err != nil {
-		errMsg := fmt.Sprintf("❌ Failed to find song!\n```\nError: %v```", err)
-		log.Printf("ERROR: Failed to search YouTube for '%s': %v", query, err)
+		errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
+		log.Printf("ERROR: Failed to search: %v", err)
 		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
 		return
 	}
 
-	log.Printf("Found song: %s (%s)", title, url)
+	var track lavalink.Track
 
-	// Add to queue
-	queue := getQueue(m.GuildID)
-	song := Song{
-		Title:     title,
-		URL:       url,
-		Requester: m.Author.Username,
+	switch result.LoadType {
+	case lavalink.LoadTypeTrack:
+		track = result.Data.(lavalink.Track)
+	case lavalink.LoadTypeSearch:
+		tracks := result.Data.([]lavalink.Track)
+		if len(tracks) == 0 {
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ No results found!")
+			return
+		}
+		track = tracks[0]
+	case lavalink.LoadTypePlaylist:
+		playlist := result.Data.(lavalink.Playlist)
+		if len(playlist.Tracks) == 0 {
+			s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Playlist is empty!")
+			return
+		}
+		track = playlist.Tracks[0]
+	default:
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, "❌ Failed to load track!")
+		return
 	}
 
-	queue.mu.Lock()
-	queue.Songs = append(queue.Songs, song)
-	queueLength := len(queue.Songs)
-	isPlaying := queue.IsPlaying
-	queue.mu.Unlock()
+	log.Printf("Found track: %s - %s", track.Info.Title, track.Info.Author)
+
+	// Get player
+	player := getPlayer(m.GuildID)
+	player.mu.Lock()
+
+	// Add to queue
+	player.Queue = append(player.Queue, track)
+	queueLength := len(player.Queue)
+	isPlaying := player.IsPlaying
+
+	player.mu.Unlock()
 
 	if queueLength == 1 && !isPlaying {
 		// Start playing
-		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, fmt.Sprintf("🎵 Now playing: **%s**", title))
-		go playMusic(s, m.GuildID, voiceChannelID, m.ChannelID, queue)
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, fmt.Sprintf("🎵 Now playing: **%s** by %s", track.Info.Title, track.Info.Author))
+		go playTrack(s, m.GuildID, voiceChannelID, m.ChannelID)
 	} else {
 		// Added to queue
-		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, fmt.Sprintf("➕ Added to queue: **%s** (Position: %d)", title, queueLength))
+		duration := formatDuration(track.Info.Length)
+		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, fmt.Sprintf("➕ Added to queue: **%s** by %s `[%s]` (Position: %d)", track.Info.Title, track.Info.Author, duration, queueLength))
+	}
+}
+
+func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID string) {
+	player := getPlayer(guildID)
+
+	player.mu.Lock()
+	if len(player.Queue) == 0 {
+		player.IsPlaying = false
+		player.mu.Unlock()
+		return
+	}
+	player.IsPlaying = true
+	player.mu.Unlock()
+
+	// Join voice channel
+	if err := s.ChannelVoiceJoinManual(guildID, voiceChannelID, false, false); err != nil {
+		log.Printf("ERROR: Failed to join voice channel: %v", err)
+		s.ChannelMessageSend(textChannelID, "❌ Failed to join voice channel!")
+		player.mu.Lock()
+		player.IsPlaying = false
+		player.mu.Unlock()
+		return
+	}
+
+	// Update voice server
+	lavalinkClient.UpdateVoiceState(context.Background(), snowflake.MustParse(guildID), voiceChannelID, false, false)
+
+	// Get current track
+	player.mu.Lock()
+	if len(player.Queue) == 0 {
+		player.IsPlaying = false
+		player.mu.Unlock()
+		return
+	}
+	track := player.Queue[0]
+	player.mu.Unlock()
+
+	// Play track
+	guildSnowflake := snowflake.MustParse(guildID)
+	ctx := context.Background()
+
+	if err := lavalinkClient.Player(guildSnowflake).Play(ctx, track); err != nil {
+		log.Printf("ERROR: Failed to play track: %v", err)
+		s.ChannelMessageSend(textChannelID, fmt.Sprintf("❌ Failed to play: %s", track.Info.Title))
+
+		// Remove failed track and try next
+		player.mu.Lock()
+		if len(player.Queue) > 0 {
+			player.Queue = player.Queue[1:]
+		}
+		player.mu.Unlock()
+
+		go handleNextTrack(guildID)
+		return
+	}
+
+	log.Printf("▶️ Playing: %s - %s", track.Info.Title, track.Info.Author)
+}
+
+func handleNextTrack(guildID string) {
+	player := getPlayer(guildID)
+
+	player.mu.Lock()
+	if len(player.Queue) > 0 {
+		player.Queue = player.Queue[1:]
+	}
+
+	if len(player.Queue) == 0 {
+		player.IsPlaying = false
+		player.mu.Unlock()
+		log.Printf("Queue finished for guild %s", guildID)
+		return
+	}
+
+	nextTrack := player.Queue[0]
+	player.mu.Unlock()
+
+	// Play next track
+	guildSnowflake := snowflake.MustParse(guildID)
+	ctx := context.Background()
+
+	if err := lavalinkClient.Player(guildSnowflake).Play(ctx, nextTrack); err != nil {
+		log.Printf("ERROR: Failed to play next track: %v", err)
+
+		// Remove failed track and try next
+		player.mu.Lock()
+		if len(player.Queue) > 0 {
+			player.Queue = player.Queue[1:]
+		}
+		player.mu.Unlock()
+
+		go handleNextTrack(guildID)
 	}
 }
 
 func handleStop(s *discordgo.Session, m *discordgo.MessageCreate) {
-	queue := getQueue(m.GuildID)
+	player := getPlayer(m.GuildID)
 
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
+	player.mu.Lock()
+	defer player.mu.Unlock()
 
-	if !queue.IsPlaying {
+	if !player.IsPlaying {
 		s.ChannelMessageSend(m.ChannelID, "❌ Nothing is playing!")
 		return
 	}
 
-	queue.Songs = []Song{}
-	queue.IsPlaying = false
+	// Stop playback
+	guildSnowflake := snowflake.MustParse(m.GuildID)
+	ctx := context.Background()
 
-	if queue.VoiceConn != nil {
-		queue.VoiceConn.Disconnect()
-		queue.VoiceConn = nil
+	if err := lavalinkClient.Player(guildSnowflake).Destroy(ctx); err != nil {
+		log.Printf("ERROR: Failed to stop player: %v", err)
+	}
+
+	// Clear queue
+	player.Queue = []lavalink.Track{}
+	player.IsPlaying = false
+
+	// Leave voice channel
+	if err := s.ChannelVoiceJoinManual(m.GuildID, "", false, false); err != nil {
+		log.Printf("ERROR: Failed to leave voice channel: %v", err)
 	}
 
 	s.ChannelMessageSend(m.ChannelID, "⏹ Stopped the music!")
 }
 
 func handleSkip(s *discordgo.Session, m *discordgo.MessageCreate) {
-	queue := getQueue(m.GuildID)
+	player := getPlayer(m.GuildID)
 
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
+	player.mu.Lock()
+	defer player.mu.Unlock()
 
-	if !queue.IsPlaying || len(queue.Songs) == 0 {
+	if !player.IsPlaying || len(player.Queue) == 0 {
 		s.ChannelMessageSend(m.ChannelID, "❌ Nothing is playing!")
 		return
 	}
 
 	// Skip current song
-	if len(queue.Songs) > 0 {
-		queue.Songs = queue.Songs[1:]
+	guildSnowflake := snowflake.MustParse(m.GuildID)
+	ctx := context.Background()
+
+	if err := lavalinkClient.Player(guildSnowflake).Stop(ctx); err != nil {
+		log.Printf("ERROR: Failed to skip: %v", err)
+		s.ChannelMessageSend(m.ChannelID, "❌ Failed to skip!")
+		return
 	}
 
 	s.ChannelMessageSend(m.ChannelID, "⏭ Skipped the song!")
-
-	// Will be handled by playMusic loop
 }
 
 func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
-	queue := getQueue(m.GuildID)
+	player := getPlayer(m.GuildID)
 
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
+	player.mu.Lock()
+	defer player.mu.Unlock()
 
-	if len(queue.Songs) == 0 {
+	if len(player.Queue) == 0 {
 		s.ChannelMessageSend(m.ChannelID, "❌ Queue is empty!")
 		return
 	}
 
 	queueText := ""
-	for i, song := range queue.Songs {
+	for i, track := range player.Queue {
+		duration := formatDuration(track.Info.Length)
 		if i == 0 {
-			queueText += fmt.Sprintf("**Now Playing:**\n🎵 %s\n\n", song.Title)
+			queueText += fmt.Sprintf("**Now Playing:**\n🎵 %s - %s `[%s]`\n\n", track.Info.Title, track.Info.Author, duration)
 		} else if i < 10 {
-			queueText += fmt.Sprintf("**%d.** %s\n", i, song.Title)
+			queueText += fmt.Sprintf("**%d.** %s - %s `[%s]`\n", i, track.Info.Title, track.Info.Author, duration)
 		}
 	}
 
-	if len(queue.Songs) > 10 {
-		queueText += fmt.Sprintf("\n...and %d more songs", len(queue.Songs)-10)
+	if len(player.Queue) > 10 {
+		queueText += fmt.Sprintf("\n...and %d more songs", len(player.Queue)-10)
 	}
 
 	embed := &discordgo.MessageEmbed{
@@ -178,140 +358,21 @@ func handleQueue(s *discordgo.Session, m *discordgo.MessageCreate) {
 		Description: queueText,
 		Color:       0x0099ff,
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Total: %d song(s)", len(queue.Songs)),
+			Text: fmt.Sprintf("Total: %d song(s)", len(player.Queue)),
 		},
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 }
 
-func searchYouTube(query string) (string, string, error) {
-	log.Printf("Searching YouTube for: %s", query)
+func formatDuration(ms int64) string {
+	duration := time.Duration(ms) * time.Millisecond
+	hours := int(duration.Hours())
+	minutes := int(duration.Minutes()) % 60
+	seconds := int(duration.Seconds()) % 60
 
-	// Use yt-dlp to search with cookies
-	cmd := exec.Command("yt-dlp",
-		"--cookies", "/var/www/thomas-bot/youtube_cookies.txt",
-		"--default-search", "ytsearch",
-		"--get-title",
-		"--get-id",
-		"--no-playlist",
-		query,
-	)
-
-	log.Printf("Running command: yt-dlp --default-search ytsearch --get-title --get-id --no-playlist %s", query)
-
-	output, err := cmd.CombinedOutput() // Get both stdout and stderr
-	if err != nil {
-		log.Printf("ERROR: yt-dlp command failed: %v", err)
-		log.Printf("ERROR: yt-dlp output: %s", string(output))
-		return "", "", fmt.Errorf("yt-dlp failed: %v (output: %s)", err, string(output))
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 	}
-
-	log.Printf("yt-dlp raw output: %s", string(output))
-
-	// Parse output (first line = title, second line = ID)
-	lines := splitLines(string(output))
-	if len(lines) < 2 {
-		log.Printf("ERROR: Invalid yt-dlp output, expected 2+ lines, got %d lines", len(lines))
-		log.Printf("ERROR: Lines received: %v", lines)
-		return "", "", fmt.Errorf("invalid output: expected 2+ lines, got %d (output: %s)", len(lines), string(output))
-	}
-
-	title := lines[0]
-	videoID := lines[1]
-	url := "https://youtube.com/watch?v=" + videoID
-
-	log.Printf("Parsed - Title: %s, Video ID: %s", title, videoID)
-
-	return title, url, nil
-}
-
-func playMusic(s *discordgo.Session, guildID, voiceChannelID, textChannelID string, queue *MusicQueue) {
-	log.Printf("Starting playback for guild %s in voice channel %s", guildID, voiceChannelID)
-
-	// Join voice channel
-	vc, err := s.ChannelVoiceJoin(guildID, voiceChannelID, false, true)
-	if err != nil {
-		log.Printf("ERROR: Failed to join voice channel %s: %v", voiceChannelID, err)
-		s.ChannelMessageSend(textChannelID, "❌ Failed to join voice channel!")
-		return
-	}
-
-	log.Printf("Successfully joined voice channel %s", voiceChannelID)
-
-	queue.mu.Lock()
-	queue.VoiceConn = vc
-	queue.IsPlaying = true
-	queue.mu.Unlock()
-
-	defer func() {
-		queue.mu.Lock()
-		queue.IsPlaying = false
-		queue.VoiceConn = nil
-		queue.mu.Unlock()
-		vc.Disconnect()
-	}()
-
-	for {
-		queue.mu.Lock()
-		if len(queue.Songs) == 0 {
-			queue.mu.Unlock()
-			s.ChannelMessageSend(textChannelID, "✅ Queue finished!")
-			break
-		}
-		currentSong := queue.Songs[0]
-		queue.mu.Unlock()
-
-		// Download and play with yt-dlp + ffmpeg
-		// This is simplified - in production you'd want better audio handling
-		_ = exec.Command("yt-dlp",
-			"-f", "bestaudio",
-			"-o", "-",
-			currentSong.URL,
-		)
-
-		// Note: Actual audio streaming would require DCA encoding
-		// This is a placeholder for the concept
-		s.ChannelMessageSend(textChannelID, fmt.Sprintf("⚠️ Playing: **%s** (Music streaming coming soon - basic implementation)", currentSong.Title))
-
-		// Simulate playback (in production, stream audio to voice)
-		// time.Sleep(3 * time.Minute)
-
-		// Remove played song
-		queue.mu.Lock()
-		if len(queue.Songs) > 0 {
-			queue.Songs = queue.Songs[1:]
-		}
-		queue.mu.Unlock()
-	}
-}
-
-func joinArgs(args []string) string {
-	result := ""
-	for i, arg := range args {
-		if i > 0 {
-			result += " "
-		}
-		result += arg
-	}
-	return result
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	current := ""
-	for _, c := range s {
-		if c == '\n' {
-			if current != "" {
-				lines = append(lines, current)
-				current = ""
-			}
-		} else if c != '\r' {
-			current += string(c)
-		}
-	}
-	if current != "" {
-		lines = append(lines, current)
-	}
-	return lines
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }

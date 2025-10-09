@@ -61,6 +61,12 @@ func main() {
 	}
 	defer dg.Close()
 
+	// Initialize Lavalink
+	if err := initLavalink(dg); err != nil {
+		log.Printf("⚠️ Failed to initialize Lavalink: %v", err)
+		log.Println("⚠️ Music commands will not work")
+	}
+
 	// Start HTTP server for health checks
 	go startHTTPServer(dg)
 

@@ -32,7 +32,7 @@ jobs:
         username: ${{ secrets.VPS_USERNAME }}
         password: ${{ secrets.VPS_PASSWORD }}
         port: 22
-        source: "thomas-bot,thomas-bot-dc/youtube_cookies.txt"
+        source: "thomas-bot,thomas-bot-dc/application.yml"
         target: "/tmp/"
 
     - name: Setup and Start Bot
@@ -66,25 +66,35 @@ jobs:
           DEPLOY_PATH="/var/www/thomas-bot"
           mkdir -p $DEPLOY_PATH
 
-          # Move binary and cookies
+          # Move binary
           echo "📦 Moving binary..."
           mv /tmp/thomas-bot $DEPLOY_PATH/
           chmod +x $DEPLOY_PATH/thomas-bot
 
-          echo "🍪 Moving YouTube cookies..."
-          mv /tmp/thomas-bot-dc/youtube_cookies.txt $DEPLOY_PATH/ || echo "⚠️ Cookies not found, will use without auth"
-
-          # Install yt-dlp and ffmpeg if not exists
-          if ! command -v yt-dlp &> /dev/null; then
-            echo "📥 Installing yt-dlp..."
-            wget -q https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-            chmod +x /usr/local/bin/yt-dlp
+          # Install Java for Lavalink
+          if ! command -v java &> /dev/null; then
+            echo "☕ Installing Java 17..."
+            apt-get update
+            apt-get install -y openjdk-17-jre-headless
           fi
 
+          # Install ffmpeg
           if ! command -v ffmpeg &> /dev/null; then
             echo "📥 Installing ffmpeg..."
-            apt-get update && apt-get install -y ffmpeg
+            apt-get install -y ffmpeg
           fi
+
+          # Setup Lavalink
+          LAVALINK_PATH="/var/www/lavalink"
+          mkdir -p $LAVALINK_PATH
+
+          if [ ! -f "$LAVALINK_PATH/Lavalink.jar" ]; then
+            echo "🎵 Downloading Lavalink..."
+            wget -q https://github.com/lavalink-devs/Lavalink/releases/download/4.0.8/Lavalink.jar -O $LAVALINK_PATH/Lavalink.jar
+          fi
+
+          echo "📝 Moving Lavalink config..."
+          mv /tmp/thomas-bot-dc/application.yml $LAVALINK_PATH/
 
           # Create .env file
           cd $DEPLOY_PATH
@@ -95,11 +105,30 @@ jobs:
           PORT=8080
           EOF
 
-          # Create systemd service
+          # Create Lavalink systemd service
+          cat > /etc/systemd/system/lavalink.service << 'LAVALINK_EOF'
+          [Unit]
+          Description=Lavalink Music Server
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/var/www/lavalink
+          ExecStart=/usr/bin/java -Xms64M -Xmx128M -jar Lavalink.jar
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          LAVALINK_EOF
+
+          # Create bot systemd service
           cat > /etc/systemd/system/thomas-bot.service << 'SYSTEMD_EOF'
           [Unit]
           Description=Thomas Discord Bot (Golang)
-          After=network.target
+          After=network.target lavalink.service
+          Requires=lavalink.service
 
           [Service]
           Type=simple
@@ -113,9 +142,17 @@ jobs:
           WantedBy=multi-user.target
           SYSTEMD_EOF
 
-          # Reload systemd and start bot
-          echo "🔄 Starting bot service..."
+          # Reload systemd and start services
+          echo "🔄 Starting services..."
           systemctl daemon-reload
+
+          echo "🎵 Starting Lavalink..."
+          systemctl enable lavalink
+          systemctl restart lavalink
+
+          sleep 5
+
+          echo "🤖 Starting bot..."
           systemctl enable thomas-bot
           systemctl restart thomas-bot
 
@@ -125,7 +162,12 @@ jobs:
           echo "=========================================="
           echo "✅ Deployment Complete!"
           echo "=========================================="
-          systemctl status thomas-bot --no-pager -l
+          echo ""
+          echo "🎵 Lavalink Status:"
+          systemctl status lavalink --no-pager -l | head -20
+          echo ""
+          echo "🤖 Bot Status:"
+          systemctl status thomas-bot --no-pager -l | head -20
 
     - name: Show Bot Logs
       if: always()
