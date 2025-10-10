@@ -145,7 +145,9 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 
 	// Load tracks with handler
 	var foundTrack *lavalink.Track
-	err = lavalinkClient.BestNode().LoadTracksHandler(ctx, queryStr, disgolink.NewResultHandler(
+	var loadErr error
+
+	lavalinkClient.BestNode().LoadTracksHandler(ctx, queryStr, disgolink.NewResultHandler(
 		func(track lavalink.Track) {
 			foundTrack = &track
 		},
@@ -164,12 +166,13 @@ func handlePlay(s *discordgo.Session, m *discordgo.MessageCreate, args []string)
 		},
 		func(err error) {
 			log.Printf("ERROR: Load failed: %v", err)
+			loadErr = err
 		},
 	))
 
-	if err != nil {
-		errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", err)
-		log.Printf("ERROR: Failed to search: %v", err)
+	if loadErr != nil {
+		errMsg := fmt.Sprintf("❌ Failed to search!\n```\nError: %v```", loadErr)
+		log.Printf("ERROR: Failed to search: %v", loadErr)
 		s.ChannelMessageEdit(m.ChannelID, searchMsg.ID, errMsg)
 		return
 	}
@@ -218,8 +221,7 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 	player.mu.Unlock()
 
 	// Join voice channel
-	vc, err := s.ChannelVoiceJoin(guildID, voiceChannelID, false, false)
-	if err != nil {
+	if _, err := s.ChannelVoiceJoin(guildID, voiceChannelID, false, false); err != nil {
 		log.Printf("ERROR: Failed to join voice channel: %v", err)
 		s.ChannelMessageSend(textChannelID, "❌ Failed to join voice channel!")
 		player.mu.Lock()
@@ -228,10 +230,8 @@ func playTrack(s *discordgo.Session, guildID, voiceChannelID, textChannelID stri
 		return
 	}
 
-	// Update voice state
+	// Voice state is updated via Discord gateway events automatically (voiceStateUpdate handler)
 	guildSnowflake, _ := snowflake.Parse(guildID)
-
-	// Note: Voice state is updated via Discord gateway events automatically
 
 	// Get current track
 	player.mu.Lock()

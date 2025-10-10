@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/joho/godotenv"
 )
 
@@ -161,12 +163,14 @@ func voiceStateUpdate(s *discordgo.Session, event *discordgo.VoiceStateUpdate) {
 		return
 	}
 
-	var channelID *string
+	guildID, _ := snowflake.Parse(event.GuildID)
+	var channelID *snowflake.ID
 	if event.ChannelID != "" {
-		channelID = &event.ChannelID
+		cid, _ := snowflake.Parse(event.ChannelID)
+		channelID = &cid
 	}
 
-	lavalinkClient.OnVoiceStateUpdate(s.State.User.ID, event.GuildID, channelID, event.SessionID)
+	lavalinkClient.OnVoiceStateUpdate(context.Background(), guildID, channelID, event.SessionID)
 }
 
 func voiceServerUpdate(s *discordgo.Session, event *discordgo.VoiceServerUpdate) {
@@ -174,7 +178,8 @@ func voiceServerUpdate(s *discordgo.Session, event *discordgo.VoiceServerUpdate)
 		return
 	}
 
-	lavalinkClient.OnVoiceServerUpdate(s.State.User.ID, event.GuildID, event.Token, event.Endpoint)
+	guildID, _ := snowflake.Parse(event.GuildID)
+	lavalinkClient.OnVoiceServerUpdate(context.Background(), guildID, event.Token, event.Endpoint)
 }
 
 func startHTTPServer(dg *discordgo.Session) {
